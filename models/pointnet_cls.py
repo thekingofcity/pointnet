@@ -22,8 +22,8 @@ def get_model(point_cloud, is_training, bn_decay=None):
     end_points = {}
 
     with tf.variable_scope('transform_net1') as sc:
-        transform = input_transform_net(point_cloud, is_training, bn_decay, K=3)
-    point_cloud_transformed = tf.matmul(point_cloud, transform)
+        transform_ = input_transform_net(point_cloud, is_training, bn_decay, K=3)
+    point_cloud_transformed = tf.matmul(point_cloud, transform_)
     input_image = tf.expand_dims(point_cloud_transformed, -1)
 
     net = tf_util.conv2d(input_image, 64, [1,3],
@@ -69,7 +69,7 @@ def get_model(point_cloud, is_training, bn_decay=None):
                           scope='dp2')
     net = tf_util.fully_connected(net, 40, activation_fn=None, scope='fc3')
 
-    return net, end_points
+    return net, end_points, point_cloud_transformed, transform_
 
 
 def get_loss(pred, label, end_points, reg_weight=0.001):

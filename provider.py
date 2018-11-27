@@ -63,9 +63,14 @@ def rotate_point_cloud_by_angle(batch_data, rotation_angle):
         #rotation_angle = np.random.uniform() * 2 * np.pi
         cosval = np.cos(rotation_angle)
         sinval = np.sin(rotation_angle)
-        rotation_matrix = np.array([[cosval, 0, sinval],
-                                    [0, 1, 0],
-                                    [-sinval, 0, cosval]])
+        # axis y
+        # rotation_matrix = np.array([[cosval, 0, sinval],
+        #                             [0, 1, 0],
+        #                             [-sinval, 0, cosval]])
+        # axis x
+        rotation_matrix = np.array([[1, 0, 0],
+                                    [0, cosval, -sinval],
+                                    [0, sinval, cosval]])
         shape_pc = batch_data[k, ...]
         rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
     return rotated_data

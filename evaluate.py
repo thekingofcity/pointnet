@@ -61,12 +61,12 @@ def evaluate(num_votes):
         is_training_pl = tf.placeholder(tf.bool, shape=())
 
         # simple model
-        pred, end_points = MODEL.get_model(pointclouds_pl, is_training_pl)
+        pred, end_points, point_cloud_transformed, TNet1 = MODEL.get_model(pointclouds_pl, is_training_pl)
         loss = MODEL.get_loss(pred, labels_pl, end_points)
-        
+
         # Add ops to save and restore all the variables.
         saver = tf.train.Saver()
-        
+
     # Create a session
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -82,11 +82,13 @@ def evaluate(num_votes):
            'labels_pl': labels_pl,
            'is_training_pl': is_training_pl,
            'pred': pred,
-           'loss': loss}
+           'loss': loss,
+           'point_cloud_transformed': point_cloud_transformed,
+           'TNet1': TNet1}
 
     eval_one_epoch(sess, ops, num_votes)
 
-   
+
 def eval_one_epoch(sess, ops, num_votes=1, topk=1):
     error_cnt = 0
     is_training = False
@@ -100,18 +102,23 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
         log_string('----'+str(fn)+'----')
         current_data, current_label = provider.loadDataFile(TEST_FILES[fn])
         current_data = current_data[:,0:NUM_POINT,:]
+        # print(current_data)
         current_label = np.squeeze(current_label)
         print(current_data.shape)
-        
+
         file_size = current_data.shape[0]
         num_batches = file_size // BATCH_SIZE
         print(file_size)
-        
+
         for batch_idx in range(num_batches):
+
+            point_cloud_transformed_val = None
+            TNet1 = None
+
             start_idx = batch_idx * BATCH_SIZE
             end_idx = (batch_idx+1) * BATCH_SIZE
             cur_batch_size = end_idx - start_idx
-            
+
             # Aggregating BEG
             batch_loss_sum = 0 # sum of losses for the batch
             batch_pred_sum = np.zeros((cur_batch_size, NUM_CLASSES)) # score for classes
@@ -122,8 +129,80 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
                 feed_dict = {ops['pointclouds_pl']: rotated_data,
                              ops['labels_pl']: current_label[start_idx:end_idx],
                              ops['is_training_pl']: is_training}
-                loss_val, pred_val = sess.run([ops['loss'], ops['pred']],
-                                          feed_dict=feed_dict)
+                loss_val, pred_val, point_cloud_transformed_val, TNet1 = sess.run(
+                    [
+                        ops['loss'], ops['pred'],
+                        ops['point_cloud_transformed'], ops['TNet1']
+                    ],
+                    feed_dict=feed_dict)
+
+
+
+                for i in range(start_idx, end_idx):
+                    l = current_label[i]
+                    img_filename = os.path.join(
+                        DUMP_DIR,
+                        "{label}.{fn}.{batch_idx}.{i}.{vote_idx}.rotated_data.jpg"
+                        .format(
+                            fn=fn,
+                            batch_idx=batch_idx,
+                            i=i,
+                            label=SHAPE_NAMES[l],
+                            vote_idx=vote_idx))
+                    # input: test point cloud
+                    output_img = pc_util.point_cloud_three_views(
+                        np.squeeze(rotated_data[i - start_idx, :, :]))
+                    # using utilities include in this repo
+                    # to draw point cloud into jpg
+                    scipy.misc.imsave(img_filename, output_img)
+
+                    img_filename = os.path.join(
+                        DUMP_DIR,
+                        "{label}.{fn}.{batch_idx}.{i}.{vote_idx}.point_cloud_transformed.jpg"
+                        .format(
+                            fn=fn,
+                            batch_idx=batch_idx,
+                            i=i,
+                            label=SHAPE_NAMES[l],
+                            vote_idx=vote_idx))
+                    # output: transformed point cloud
+                    output_img = pc_util.point_cloud_three_views(
+                        np.squeeze(
+                            point_cloud_transformed_val[i - start_idx, :, :]))
+                    # using utilities include in this repo
+                    # to draw point cloud into jpg
+                    scipy.misc.imsave(img_filename, output_img)
+
+                    # j = i - start_idx
+                    # f = open(
+                    #     "dump/{label}.{fn}.{batch_idx}.{i}.{vote_idx}.txt".
+                    #     format(
+                    #         fn=fn,
+                    #         batch_idx=batch_idx,
+                    #         i=i,
+                    #         label=SHAPE_NAMES[l],
+                    #         vote_idx=vote_idx), "w")
+                    # f.write(str(TNet1[j]))  # T-Net1: 3X3 martix
+                    # f.write("\r\n")
+                    # # ||1-AA'||
+                    # det = np.linalg.det(
+                    #     np.eye(3) - np.dot(TNet1[j], TNet1[j].T))
+                    # f.write(str(det))
+                    # f.write("\r\n")
+                    # z, y, x = mat2euler(TNet1[j])
+                    # print(z, y, x)
+                    # theta, vec = euler2angle_axis(z, y, x)
+                    # print(theta, vec)
+                    # f.write(str(theta*180/np.pi) + "\r\n" + str(vec))
+                    # f.close()
+
+
+
+                # print(point_cloud_transformed_val.shape)  # (4, 1024, 3)
+                # print(rotated_data.shape)  # (4, 1024, 3)
+                # print(current_data[0, :, :].shape)  # (1024, 3)
+                # print(np.squeeze(current_data[0, :, :]).shape)  # (1024, 3)
+
                 batch_pred_sum += pred_val
                 batch_pred_val = np.argmax(pred_val, 1)
                 for el_idx in range(cur_batch_size):
@@ -145,7 +224,7 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
                 total_seen_class[l] += 1
                 total_correct_class[l] += (pred_val[i-start_idx] == l)
                 fout.write('%d, %d\n' % (pred_val[i-start_idx], l))
-                
+
                 if pred_val[i-start_idx] != l and FLAGS.visu: # ERROR CASE, DUMP!
                     img_filename = '%d_label_%s_pred_%s.jpg' % (error_cnt, SHAPE_NAMES[l],
                                                            SHAPE_NAMES[pred_val[i-start_idx]])
@@ -153,18 +232,18 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
                     output_img = pc_util.point_cloud_three_views(np.squeeze(current_data[i, :, :]))
                     scipy.misc.imsave(img_filename, output_img)
                     error_cnt += 1
-                
+
     log_string('eval mean loss: %f' % (loss_sum / float(total_seen)))
     log_string('eval accuracy: %f' % (total_correct / float(total_seen)))
     log_string('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float))))
-    
+
     class_accuracies = np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float)
     for i, name in enumerate(SHAPE_NAMES):
         log_string('%10s:\t%0.3f' % (name, class_accuracies[i]))
-    
+
 
 
 if __name__=='__main__':
     with tf.Graph().as_default():
-        evaluate(num_votes=1)
+        evaluate(num_votes=6)
     LOG_FOUT.close()
